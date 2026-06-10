@@ -194,19 +194,8 @@ impl Editor for ViziaEditor {
             .deferred_resize
             .store(true, Ordering::Release);
         if let Ok(mut proxy) = self.host_resize_proxy.lock() {
-            match proxy.as_mut() {
-                Some(proxy) => {
-                    let result = proxy.emit(crate::widgets::ApplyHostResize);
-                    nih_plug::nih_log!(
-                        "vizia set_size({logical_width}, {logical_height}): proxy emit {:?}",
-                        result.map_err(|e| format!("{e:?}"))
-                    );
-                }
-                None => {
-                    nih_plug::nih_log!(
-                        "vizia set_size({logical_width}, {logical_height}): NO proxy captured"
-                    );
-                }
+            if let Some(proxy) = proxy.as_mut() {
+                let _ = proxy.emit(crate::widgets::ApplyHostResize);
             }
         }
         true
