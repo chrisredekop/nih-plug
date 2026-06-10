@@ -116,7 +116,8 @@ impl Editor for ViziaEditor {
                     .is_ok()
                 {
                     let (width, height) = vizia_state.inner_logical_size();
-                    cx.set_window_size(WindowSize { width, height });
+                    let mut event_cx = EventContext::new(cx);
+                    event_cx.set_window_size(WindowSize { width, height });
                 }
             }
         });
