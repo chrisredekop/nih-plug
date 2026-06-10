@@ -2712,8 +2712,14 @@ impl<P: ClapPlugin> Wrapper<P> {
     }
 
     unsafe extern "C" fn ext_gui_can_resize(_plugin: *const clap_plugin) -> bool {
-        // TODO: Implement Host->Plugin GUI resizing
-        false
+        // OpenPitch patch: declare resizability so hosts act on the plugin's
+        // own `request_resize()` calls (FL Studio checks `can_resize` and
+        // otherwise ignores the live request, only picking the new size up
+        // on the next window open). Host->plugin resizing is still
+        // effectively rejected: `adjust_size`/`set_size` only ever accept
+        // the editor's current size, so a host-initiated frame drag snaps
+        // back instead of clipping the GUI.
+        true
     }
 
     unsafe extern "C" fn ext_gui_get_resize_hints(
@@ -2725,12 +2731,27 @@ impl<P: ClapPlugin> Wrapper<P> {
     }
 
     unsafe extern "C" fn ext_gui_adjust_size(
-        _plugin: *const clap_plugin,
-        _width: *mut u32,
-        _height: *mut u32,
+        plugin: *const clap_plugin,
+        width: *mut u32,
+        height: *mut u32,
     ) -> bool {
-        // TODO: Implement Host->Plugin GUI resizing
-        false
+        // OpenPitch patch (see `ext_gui_can_resize`): the only size the
+        // editor supports is its current one, so any host proposal is
+        // adjusted to exactly that. After the plugin's own
+        // `request_resize(new)` the editor already reports the new size, so
+        // the host's follow-up `adjust_size(new)`/`set_size(new)` confirm it.
+        check_null_ptr!(false, plugin, (*plugin).plugin_data, width, height);
+        let wrapper = &*((*plugin).plugin_data as *const Self);
+
+        let editor = wrapper.editor.borrow();
+        let (unscaled_width, unscaled_height) = match editor.as_ref() {
+            Some(editor) => editor.lock().size(),
+            None => return false,
+        };
+        let scaling_factor = wrapper.editor_scaling_factor.load(Ordering::Relaxed);
+        *width = (unscaled_width as f32 * scaling_factor).round() as u32;
+        *height = (unscaled_height as f32 * scaling_factor).round() as u32;
+        true
     }
 
     unsafe extern "C" fn ext_gui_set_size(
