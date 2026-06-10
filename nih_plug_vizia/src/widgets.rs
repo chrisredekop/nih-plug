@@ -164,6 +164,10 @@ impl Model for WindowModel {
             self.vizia_state
                 .suppress_resize_request
                 .store(true, std::sync::atomic::Ordering::Release);
+            nih_plug::nih_log!(
+                "vizia ApplyHostResize: window {:?} -> setting ({width}, {height})",
+                cx.window_size()
+            );
             cx.set_window_size(WindowSize { width, height });
             meta.consume();
         });
@@ -213,10 +217,16 @@ impl Model for WindowModel {
                     .suppress_resize_request
                     .swap(false, std::sync::atomic::Ordering::AcqRel)
                 {
+                    nih_plug::nih_log!(
+                        "vizia GeometryChanged {logical_size:?}: host-driven, no renegotiation"
+                    );
                     self.last_inner_window_size.store(logical_size);
                     self.vizia_state.scale_factor.store(scale_factor);
                     return;
                 }
+                nih_plug::nih_log!(
+                    "vizia GeometryChanged {logical_size:?}: plugin-driven, renegotiating"
+                );
 
                 // Our embedded baseview window will have already been resized. If the host does not
                 // accept our new size, then we'll try to undo that
