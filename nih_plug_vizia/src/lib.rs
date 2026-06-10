@@ -98,6 +98,17 @@ pub struct ViziaState {
     /// Whether the editor's window is currently open.
     #[serde(skip)]
     open: AtomicBool,
+    /// OpenPitch patch: called (from the host's thread) when the host wants
+    /// to resize the window, with the proposed size in `size_fn` units. The
+    /// implementation should update whatever state `size_fn` reads (clamping
+    /// as desired); the actual window resize is applied deferred on the GUI
+    /// thread. `None` = host-driven resizing rejected (upstream behavior).
+    #[serde(skip)]
+    on_host_resize: Option<Box<dyn Fn(u32, u32) + Send + Sync>>,
+    /// OpenPitch patch: one-shot flag telling the GUI thread's idle callback
+    /// to re-apply `size_fn` to the window after a host-driven resize.
+    #[serde(skip)]
+    deferred_resize: AtomicBool,
 }
 
 /// A default implementation for `size_fn` needed to be able to derive the `Deserialize` trait.
@@ -140,6 +151,27 @@ impl ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(1.0),
             open: AtomicBool::new(false),
+            on_host_resize: None,
+            deferred_resize: AtomicBool::new(false),
+        })
+    }
+
+    /// OpenPitch patch: like [`new()`][Self::new()], but additionally accepts
+    /// **host-driven** window resizes (e.g. the user dragging the plugin
+    /// frame in FL Studio). `on_host_resize` receives the proposed size in
+    /// the same logical units `size_fn` returns and must update whatever
+    /// state `size_fn` reads (clamping as desired); the window is then
+    /// resized to `size_fn`'s new value on the GUI thread.
+    pub fn new_resizable(
+        size_fn: impl Fn() -> (u32, u32) + Send + Sync + 'static,
+        on_host_resize: impl Fn(u32, u32) + Send + Sync + 'static,
+    ) -> Arc<ViziaState> {
+        Arc::new(ViziaState {
+            size_fn: Box::new(size_fn),
+            scale_factor: AtomicCell::new(1.0),
+            open: AtomicBool::new(false),
+            on_host_resize: Some(Box::new(on_host_resize)),
+            deferred_resize: AtomicBool::new(false),
         })
     }
 
@@ -154,6 +186,8 @@ impl ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(default_scale_factor),
             open: AtomicBool::new(false),
+            on_host_resize: None,
+            deferred_resize: AtomicBool::new(false),
         })
     }
 

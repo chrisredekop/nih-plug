@@ -2737,28 +2737,15 @@ impl<P: ClapPlugin> Wrapper<P> {
         width: *mut u32,
         height: *mut u32,
     ) -> bool {
-        // OpenPitch patch (see `ext_gui_can_resize`): the only size the
-        // editor supports is its current one, so any host proposal is
-        // adjusted to exactly that. After the plugin's own
-        // `request_resize(new)` the editor already reports the new size, so
-        // the host's follow-up `adjust_size(new)`/`set_size(new)` confirm it.
+        // OpenPitch patch (see `ext_gui_can_resize`): host-driven resizing is
+        // accepted, so the proposal is echoed back unchanged here and applied
+        // (with the editor's own clamping) in `set_size`. Editors that don't
+        // implement `Editor::set_size` still only support their current size.
         check_null_ptr!(false, plugin, (*plugin).plugin_data, width, height);
         let wrapper = &*((*plugin).plugin_data as *const Self);
-
-        let proposed = (*width, *height);
-        let editor = wrapper.editor.borrow();
-        let (unscaled_width, unscaled_height) = match editor.as_ref() {
-            Some(editor) => editor.lock().size(),
-            None => return false,
-        };
-        let scaling_factor = wrapper.editor_scaling_factor.load(Ordering::Relaxed);
-        *width = (unscaled_width as f32 * scaling_factor).round() as u32;
-        *height = (unscaled_height as f32 * scaling_factor).round() as u32;
-        nih_log!(
-            "clap gui adjust_size: host proposed {proposed:?}, answering ({}, {})",
-            *width,
-            *height
-        );
+        if wrapper.editor.borrow().is_none() {
+            return false;
+        }
         true
     }
 
@@ -2767,22 +2754,38 @@ impl<P: ClapPlugin> Wrapper<P> {
         width: u32,
         height: u32,
     ) -> bool {
-        // TODO: Implement Host->Plugin GUI resizing
-        // TODO: The host will also call this if an asynchronous (on Linux) resize request fails
+        // OpenPitch patch: forward host-driven resizes to the editor
+        // (`Editor::set_size`, logical pixels). Editors without support fall
+        // back to the old behavior of only accepting their current size.
         check_null_ptr!(false, plugin, (*plugin).plugin_data);
         let wrapper = &*((*plugin).plugin_data as *const Self);
 
-        let (unscaled_width, unscaled_height) =
-            wrapper.editor.borrow().as_ref().unwrap().lock().size();
         let scaling_factor = wrapper.editor_scaling_factor.load(Ordering::Relaxed);
+        let logical_width = (width as f32 / scaling_factor).round() as u32;
+        let logical_height = (height as f32 / scaling_factor).round() as u32;
+
+        let editor = wrapper.editor.borrow();
+        let Some(editor) = editor.as_ref() else {
+            return false;
+        };
+        let editor = editor.lock();
+        if editor.set_size(logical_width, logical_height) {
+            nih_log!(
+                "clap gui set_size: host set ({width}, {height}) physical -> \
+                 editor accepted ({logical_width}, {logical_height}) logical"
+            );
+            return true;
+        }
+
+        // Legacy fixed-size editors: only the current size is acceptable.
+        let (unscaled_width, unscaled_height) = editor.size();
         let (editor_width, editor_height) = (
             (unscaled_width as f32 * scaling_factor).round() as u32,
             (unscaled_height as f32 * scaling_factor).round() as u32,
         );
-
         let accepted = width == editor_width && height == editor_height;
         nih_log!(
-            "clap gui set_size: host set ({width}, {height}), editor is \
+            "clap gui set_size: host set ({width}, {height}), fixed-size editor is \
              ({editor_width}, {editor_height}) -> accepted={accepted}"
         );
         accepted

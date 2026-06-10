@@ -94,6 +94,7 @@ impl Editor for ViziaEditor {
         })
         .on_idle({
             let emit_parameters_changed_event = self.emit_parameters_changed_event.clone();
+            let vizia_state = self.vizia_state.clone();
             move |cx| {
                 if emit_parameters_changed_event
                     .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
@@ -103,6 +104,19 @@ impl Editor for ViziaEditor {
                         Event::new(RawParamEvent::ParametersChanged)
                             .propagate(Propagation::Subtree),
                     );
+                }
+
+                // OpenPitch patch: a host-driven resize updated the size
+                // state from the host's thread; apply it to the embedded
+                // window here on the GUI thread (one-shot, so a host that
+                // rejects the follow-up request_resize can't ping-pong).
+                if vizia_state
+                    .deferred_resize
+                    .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    let (width, height) = vizia_state.inner_logical_size();
+                    cx.set_window_size(WindowSize { width, height });
                 }
             }
         });
@@ -137,6 +151,25 @@ impl Editor for ViziaEditor {
         // used for HiDPI and also known to the host, and a user scale factor that the user can use
         // to arbitrarily resize the GUI
         self.scaling_factor.store(Some(factor));
+        true
+    }
+
+    fn set_size(&self, width: u32, height: u32) -> bool {
+        // OpenPitch patch: host-driven resize. `width`/`height` arrive in the
+        // same units `size()` reports (logical pixels including the user
+        // scale factor). Convert to `size_fn` units, let the app's callback
+        // update (and clamp) its size state, then apply the result to the
+        // embedded window from the GUI thread's idle callback.
+        let Some(on_host_resize) = &self.vizia_state.on_host_resize else {
+            return false;
+        };
+        let user_scale = self.vizia_state.user_scale_factor();
+        let logical_width = (f64::from(width) / user_scale).round() as u32;
+        let logical_height = (f64::from(height) / user_scale).round() as u32;
+        on_host_resize(logical_width, logical_height);
+        self.vizia_state
+            .deferred_resize
+            .store(true, Ordering::Release);
         true
     }
 
