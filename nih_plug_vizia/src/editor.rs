@@ -116,6 +116,13 @@ impl Editor for ViziaEditor {
                     .is_ok()
                 {
                     let (width, height) = vizia_state.inner_logical_size();
+                    // The host initiated this resize — skip the
+                    // `request_resize` renegotiation that the following
+                    // `GeometryChanged` would trigger (hosts that refuse
+                    // plugin-initiated requests would revert it).
+                    vizia_state
+                        .suppress_resize_request
+                        .store(true, Ordering::Release);
                     let mut event_cx = EventContext::new(cx);
                     event_cx.set_window_size(WindowSize { width, height });
                 }

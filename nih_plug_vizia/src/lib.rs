@@ -109,6 +109,12 @@ pub struct ViziaState {
     /// to re-apply `size_fn` to the window after a host-driven resize.
     #[serde(skip)]
     deferred_resize: AtomicBool,
+    /// OpenPitch patch: one-shot flag suppressing the `request_resize`
+    /// renegotiation for the next `GeometryChanged` — that resize was
+    /// initiated by the host itself, and hosts that refuse plugin-initiated
+    /// requests (FL Studio) would otherwise revert it immediately.
+    #[serde(skip)]
+    pub(crate) suppress_resize_request: AtomicBool,
 }
 
 /// A default implementation for `size_fn` needed to be able to derive the `Deserialize` trait.
@@ -153,6 +159,7 @@ impl ViziaState {
             open: AtomicBool::new(false),
             on_host_resize: None,
             deferred_resize: AtomicBool::new(false),
+            suppress_resize_request: AtomicBool::new(false),
         })
     }
 
@@ -172,6 +179,7 @@ impl ViziaState {
             open: AtomicBool::new(false),
             on_host_resize: Some(Box::new(on_host_resize)),
             deferred_resize: AtomicBool::new(false),
+            suppress_resize_request: AtomicBool::new(false),
         })
     }
 
@@ -188,6 +196,7 @@ impl ViziaState {
             open: AtomicBool::new(false),
             on_host_resize: None,
             deferred_resize: AtomicBool::new(false),
+            suppress_resize_request: AtomicBool::new(false),
         })
     }
 

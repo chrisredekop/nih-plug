@@ -180,6 +180,22 @@ impl Model for WindowModel {
                     return;
                 }
 
+                // OpenPitch patch: when this geometry change was caused by a
+                // **host-driven** resize (`Editor::set_size`), the host
+                // already knows and approved the size — renegotiating via
+                // `request_resize` would make hosts that refuse
+                // plugin-initiated requests (FL Studio) revert their own
+                // resize. Record the new size and stop here.
+                if self
+                    .vizia_state
+                    .suppress_resize_request
+                    .swap(false, std::sync::atomic::Ordering::AcqRel)
+                {
+                    self.last_inner_window_size.store(logical_size);
+                    self.vizia_state.scale_factor.store(scale_factor);
+                    return;
+                }
+
                 // Our embedded baseview window will have already been resized. If the host does not
                 // accept our new size, then we'll try to undo that
                 self.last_inner_window_size.store(logical_size);
