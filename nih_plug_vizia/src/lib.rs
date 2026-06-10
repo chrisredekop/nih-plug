@@ -63,6 +63,7 @@ where
         scaling_factor: AtomicCell::new(Some(1.0)),
 
         emit_parameters_changed_event: Arc::new(AtomicBool::new(false)),
+        host_resize_proxy: Arc::new(std::sync::Mutex::new(None)),
     }))
 }
 

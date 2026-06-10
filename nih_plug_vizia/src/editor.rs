@@ -30,6 +30,13 @@ pub(crate) struct ViziaEditor {
     /// to compute a property in an event handler. Like when positioning an element based on the
     /// display value's width.
     pub(crate) emit_parameters_changed_event: Arc<AtomicBool>,
+
+    /// OpenPitch patch: a proxy into the running GUI's event loop, captured
+    /// when the editor spawns. `Editor::set_size` (called from the host's
+    /// thread) uses it to wake the GUI and apply a host-driven resize — the
+    /// proxy queue is drained every frame, unlike the idle callback, which
+    /// vizia_baseview only runs on input events.
+    pub(crate) host_resize_proxy: Arc<std::sync::Mutex<Option<vizia::context::ContextProxy>>>,
 }
 
 impl Editor for ViziaEditor {
@@ -41,6 +48,7 @@ impl Editor for ViziaEditor {
         let app = self.app.clone();
         let vizia_state = self.vizia_state.clone();
         let theming = self.theming;
+        let host_resize_proxy = self.host_resize_proxy.clone();
 
         let (unscaled_width, unscaled_height) = vizia_state.inner_logical_size();
         let system_scaling_factor = self.scaling_factor.load();
@@ -78,6 +86,12 @@ impl Editor for ViziaEditor {
                 )),
             }
             .build(cx);
+
+            // OpenPitch patch: capture a proxy into this GUI's event loop so
+            // host-driven resizes (arriving on the host's thread) can wake it.
+            if let Ok(mut proxy) = host_resize_proxy.lock() {
+                *proxy = Some(cx.get_proxy());
+            }
 
             app(cx, context.clone())
         })
@@ -166,8 +180,9 @@ impl Editor for ViziaEditor {
         // OpenPitch patch: host-driven resize. `width`/`height` arrive in the
         // same units `size()` reports (logical pixels including the user
         // scale factor). Convert to `size_fn` units, let the app's callback
-        // update (and clamp) its size state, then apply the result to the
-        // embedded window from the GUI thread's idle callback.
+        // update (and clamp) its size state, then wake the GUI's event loop
+        // to apply the result (`ApplyHostResize` → `WindowModel`). The idle
+        // flag stays as a fallback for runtimes without an event proxy.
         let Some(on_host_resize) = &self.vizia_state.on_host_resize else {
             return false;
         };
@@ -178,6 +193,11 @@ impl Editor for ViziaEditor {
         self.vizia_state
             .deferred_resize
             .store(true, Ordering::Release);
+        if let Ok(mut proxy) = self.host_resize_proxy.lock() {
+            if let Some(proxy) = proxy.as_mut() {
+                let _ = proxy.emit(crate::widgets::ApplyHostResize);
+            }
+        }
         true
     }
 

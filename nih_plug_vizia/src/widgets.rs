@@ -144,8 +144,30 @@ impl Model for ParamModel {
     }
 }
 
+/// OpenPitch patch: emitted through vizia's event proxy when the host
+/// resized the window (`Editor::set_size`). Handled by [`WindowModel`] on the
+/// GUI thread, where the new size (already stored in whatever the
+/// `ViziaState`'s size function reads) is applied to the embedded window.
+/// An event (rather than an idle-callback flag) because vizia_baseview only
+/// runs the idle callback on input events, while the proxy queue is drained
+/// every frame — a host frame drag generates no input events.
+pub(crate) struct ApplyHostResize;
+
 impl Model for WindowModel {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|_: &ApplyHostResize, meta| {
+            let (width, height) = self.vizia_state.inner_logical_size();
+            // The host initiated this resize: skip the request_resize
+            // renegotiation that the resulting GeometryChanged would trigger
+            // (hosts that refuse plugin-initiated requests would revert
+            // their own resize).
+            self.vizia_state
+                .suppress_resize_request
+                .store(true, std::sync::atomic::Ordering::Release);
+            cx.set_window_size(WindowSize { width, height });
+            meta.consume();
+        });
+
         event.map(|gui_context_event, meta| match gui_context_event {
             GuiContextEvent::Resize => {
                 // This will trigger a `WindowEvent::GeometryChanged`, which in turn causes the
