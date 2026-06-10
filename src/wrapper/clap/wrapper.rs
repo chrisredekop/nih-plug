@@ -797,14 +797,16 @@ impl<P: ClapPlugin> Wrapper<P> {
             (Some(host_gui), Some(editor)) => {
                 let (unscaled_width, unscaled_height) = editor.lock().size();
                 let scaling_factor = self.editor_scaling_factor.load(Ordering::Relaxed);
+                let width = (unscaled_width as f32 * scaling_factor).round() as u32;
+                let height = (unscaled_height as f32 * scaling_factor).round() as u32;
 
-                unsafe_clap_call! {
-                    host_gui=>request_resize(
-                        &*self.host_callback,
-                        (unscaled_width as f32 * scaling_factor).round() as u32,
-                        (unscaled_height as f32 * scaling_factor).round() as u32,
-                    )
-                }
+                let granted = unsafe_clap_call! {
+                    host_gui=>request_resize(&*self.host_callback, width, height)
+                };
+                nih_log!(
+                    "clap gui request_resize({width}, {height}) -> granted={granted}"
+                );
+                granted
             }
             _ => false,
         }
@@ -2743,6 +2745,7 @@ impl<P: ClapPlugin> Wrapper<P> {
         check_null_ptr!(false, plugin, (*plugin).plugin_data, width, height);
         let wrapper = &*((*plugin).plugin_data as *const Self);
 
+        let proposed = (*width, *height);
         let editor = wrapper.editor.borrow();
         let (unscaled_width, unscaled_height) = match editor.as_ref() {
             Some(editor) => editor.lock().size(),
@@ -2751,6 +2754,11 @@ impl<P: ClapPlugin> Wrapper<P> {
         let scaling_factor = wrapper.editor_scaling_factor.load(Ordering::Relaxed);
         *width = (unscaled_width as f32 * scaling_factor).round() as u32;
         *height = (unscaled_height as f32 * scaling_factor).round() as u32;
+        nih_log!(
+            "clap gui adjust_size: host proposed {proposed:?}, answering ({}, {})",
+            *width,
+            *height
+        );
         true
     }
 
@@ -2772,7 +2780,12 @@ impl<P: ClapPlugin> Wrapper<P> {
             (unscaled_height as f32 * scaling_factor).round() as u32,
         );
 
-        width == editor_width && height == editor_height
+        let accepted = width == editor_width && height == editor_height;
+        nih_log!(
+            "clap gui set_size: host set ({width}, {height}), editor is \
+             ({editor_width}, {editor_height}) -> accepted={accepted}"
+        );
+        accepted
     }
 
     unsafe extern "C" fn ext_gui_set_parent(
